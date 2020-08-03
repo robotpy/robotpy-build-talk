@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>robotpy-build</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <style type="text/css">
+    @import url(https://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
+    @import url(https://fonts.googleapis.com/css?family=Droid+Serif:400,700,400italic);
+    @import url(https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700,400italic);
+
+    body {
+      font-family: 'Droid Serif';
+      font-size: 1.3em;
+    }
+
+    h1,
+    h2,
+    h3 {
+      font-family: 'Yanone Kaffeesatz';
+      font-weight: normal;
+      color: #ffffff;
+    }
+
+    li li {
+      font-size: 0.8em;
+      margin-top: 0.5em;
+    }
+
+    .remark-code,
+    .remark-inline-code {
+      font-family: 'Ubuntu Mono';
+    }
+
+    .remark-container {
+      background-color: #272b30;
+    }
+
+    .remark-slide-content {
+      background-color: #2e3338;
+      color: #c8c8c8;
+    }
+
+    .column:first-of-type {
+      float: left;
+    }
+
+    .column:last-of-type {
+      float: right;
+    }
+
+    .split-50 .column:first-of-type {
+      width: 48%;
+      margin-right: 2%;
+    }
+
+    .split-50 .column:last-of-type {
+      margin-left: 2%;
+      width: 48%;
+    }
+
+    .image-fit img {
+      width: 100%;
+    }
+
+    .small {
+      font-size: 0.7em;
+    }
+
+    @page {
+      size: 908px 681px;
+      margin: 0;
+    }
+
+    @media print {
+      .remark-slide-scaler {
+        width: 100% !important;
+        height: 100% !important;
+        transform: scale(1) !important;
+        top: 0 !important;
+        left: 0 !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <textarea id="source">
+
+class: left, middle
+
+<h1 style="font-size: 3em">
+  robotpy-build
+  <img style="float: right" src="robotpy.png" width="240px" height="80px" />
+</h1>
+
+## (mostly) automated C++ wrapping for Python
+
+---
+
+layout: true
+
+<img style="float: right" src="robotpy.png" width="198px" height="66px" />
+
+---
+
+# overview
+
+* Introduction
+
+* The Problem
+
+* Requirements
+
+* Solution
+
+---
+
+# Introduction
+
+.split-50[.column[
+
+* I've worked with high school students on FIRST Robotics teams
+  since 2009
+
+* I am the primary maintainer of RobotPy
+  * Unofficial Python stack for FIRST Robotics
+
+]
+
+.column[
+  .image-fit[![FRC 1418 2014 robot](frc1418.jpg)]
+]]
+
+???
+
+Transition: let's jump right into.. the problem
+
+---
+
+# The Problem
+
+* FIRST Robotics publishes Java/C++ libraries for controlling robots
+
+&nbsp;
+
+``` c++
+class Robot : public frc::TimedRobot {
+public:
+
+  void TeleopPeriodic() override {
+    m_robotDrive.ArcadeDrive(m_stick.GetY(), m_stick.GetX());
+  }
+
+private:
+  frc::Joystick m_stick{0};
+  frc::PWMVictorSPX m_left{0};
+  frc::PWMVictorSPX m_right{1};
+  frc::DifferentialDrive m_robotDrive{m_left, m_right};
+};
+
+```
+
+???
+
+Actual FRC C++ code
+
+---
+
+# The Problem
+
+* We wanted to use Python to control robots
+  * 2011-2014: Manual SIP-based C++ wrappers
+  * 2015-2019: Manually translating Java to Python and interfacing
+    with hardware via ctypes
+
+``` python
+class MyRobot(wpilib.TimedRobot):
+
+  def __init__(self):
+    self.stick = wpilib.Joystick(0)
+    self.left = wpilib.PWMVictorSPX(0)
+    self.right = wpilib.PWMVictorSPX(1)
+    self.drive = wpilib.DifferentialDrive(self.left,
+                                          self.right)
+  
+  def teleopPeriodic(self):
+    self.drive.arcadeDrive(self.stick.getY(),
+                           self.stick.getX())
+
+```
+
+???
+
+Actual FRC RobotPy code
+
+---
+
+# The Problem
+
+It's really useful to understand the scale of the problem we're dealing with now
+--
+
+* For 2020 season, there are around ~12 different libraries to port
+  * Most have 'only' 1-20 objects, but it's a lot of work!
+  * Libraries build on top of each other -- lots of dependencies
+
+--
+* WPILib (primary library used for Robot control)
+  * 200+ classes/headers, dozens added each year to solve new problems
+  * Lots of inheritance, inconsistent naming
+
+---
+
+# The Realization
+
+* Manually translating Java to Python...
+  * Not interesting
+  * Error prone
+  * Very time consuming
+
+???
+
+Time to do something different
+
+---
+
+# Let's wrap C++ again!
+
+* There are lots of ways to use C++ libraries from Python
+
+  * ctypes/FFI
+  * Cython
+  * SWIG
+  * SIP
+  * Boost.Python
+  * AutoWIG
+  * clif
+  * shiboken
+  * .. so many more
+
+???
+
+---
+
+# This isn't a panacea
+--
+
+* Lots of solutions support C, fewer support C++
+  * And when they do support C++, sometimes only a small subset
+--
+
+* Often requires a lot of boilerplate
+  * Separate configuration languages or header-like files
+
+--
+* Lots of quirks
+  * Large non-python dependencies
+  * Cross-platform support is problematic
+  * Inter-package dependencies can be obnoxious
+  * Usually require you to bring your own build system
+
+???
+
+And of course, this leads to the question...
+
+---
+
+layout: false
+class: center, middle
+
+# Can we do better?
+
+---
+
+layout: true
+
+<img style="float: right" src="robotpy.png" width="198px" height="66px" />
+
+---
+
+# We can do better
+
+.image-fit[![Automate all the things](automate.jpg)]
+
+---
+
+# Introducing robotpy-build
+
+* Pure python, cross-platform solution
+
+* Autogenerates python wrapper modules by parsing C++ header files
+
+* Builds generated code + user customizations
+
+* Provides dependency (py/.h/.lib) management
+
+![robotpy-build](rpybuild-flow.svg)
+
+---
+
+# Goal: Autowrap this
+
+``` c++
+#pragma once
+
+/** Adds 2 to the first parameter and returns it */
+int add2(int x);
+
+/**
+    Doxygen documentation is automatically added to your
+    python objects when the bindings are autogenerated.
+*/
+class DemoClass {
+public:
+
+    /** Sets X */
+    void setX(int x);
+
+    /** Gets X */
+    int getX() const;
+
+private:
+    int m_x = 0;
+};
+```
+
+---
+
+# First step: Parse C++ headers
+
+``` pycon
+C++ => ??? => Python
+```
+
+--
+Turns out to be a really difficult problem, especially from Python!
+
+--
+Potential solutions include...
+  * pygccxml
+  * gcc-python-plugin
+  * clang python bindings
+  * custom parser
+  * and...
+
+---
+
+# CppHeaderParser
+
+``` pycon
+C++ => CppHeaderParser => ??? => Python
+```
+
+* CppHeaderParser somehow produces useful output from header files
+  * ... is messy and hacky, but pure python
+  * Forked it and rewrote large parts so it can process modern C++11/14/17
+  * I've come to the conclusion that it works because it's a mess and ignores hard parsing problems
+
+* Unfortunately has really awful C++ preprocessor macro support
+  * This is a problem
+
+---
+
+# pcpp
+
+``` pycon
+C++ => pcpp => CppHeaderParser => ??? => Python
+```
+
+* Preprocesses C++ headers, removing nasty macros
+
+* Pure python
+
+* Passes C99 compliance tests
+
+---
+
+# Next: C++/Python interface
+
+``` pycon
+C++ => pcpp => CppHeaderParser => ??? => Python
+```
+
+* Lots of options here!
+  * Raw CPython CAPI (yuck)
+  * SWIG
+  * SIP
+  * Cython
+  * Boost.Python
+  * and...
+
+---
+
+# pybind11 is a dream
+
+``` pycon
+C++ => pcpp => CppHeaderParser => ??? => pybind11 => Python
+```
+
+* Seamless operability between C++11 and Python
+
+* Really simple to do simple things, complex things are possible
+  * Template metaprogramming automatically infers
+    aspects that manifest in other binders as lots of boilerplate
+
+* 'All you need' to bind a C++ class + methods is:
+
+```c++
+py::class_<DemoClass> cls_DemoClass(m, "DemoClass");
+cls_DemoClass.doc() = "Doxygen documentation is...";
+cls_DemoClass
+  .def("setX", &DemoClass::setX, py::doc("Sets X"))
+  .def("getX", &DemoClass::getX, py::doc("Gets X"));
+```
+
+???
+
+Remember to highlight that setX/getX don't mention their parameters at all
+
+---
+
+# Putting it all together
+
+``` pycon
+C++ => pcpp => CppHeaderParser => MAGIC => pybind11 => Python
+```
+
+* User config tells `setup.py` builder what files to parse
+  * Provide optional customizations
+
+* Magic glue takes CppHeaderParser dicts, generates pybind11
+
+* Use the normal Python build stuff to compile + install
+
+---
+
+# Limitations
+
+* Complex things require configuration
+* Some issues remain 
+  * virtual inheritance problems remain
+  * Some issues with libraries that extensively use value semantics
+
+* Python 3.6+ required
+
+---
+
+# Simple example walkthrough
+
+Install robotpy-build
+
+```bash
+$ pip install robotpy-build
+```
+
+Then create `setup.py` boilerplate
+
+```py
+#!/usr/bin/env python3
+
+from robotpy_build.setup import setup
+
+setup()
+
+```
+
+---
+
+# Simple example walkthrough
+
+Create `pyproject.toml` (`rpydemo` package config snippet below)
+
+``` toml
+[tool.robotpy-build.wrappers."rpydemo"]
+name = "rpydemo"
+
+# C++ source files to compile
+sources = [
+    "rpydemo/src/demo.cpp",
+    "rpydemo/src/main.cpp"
+]
+
+# This tells robotpy-build to parse include/demo.h and
+# autogenerate pybind11 wrappers for the header
+generate = [
+    { demo = "demo.h" }
+]
+```
+
+---
+
+# Simple example walkthrough
+
+* Add other files
+  * `rpydemo/__init__.py`
+  * `rpydemo/include/demo.h`
+  * `rpydemo/src/demo.cpp`
+  * `rpydemo/src/main.cpp`
+
+`main.cpp` is just boilerplate for this simple project
+
+```c++
+#include <rpygen_wrapper.hpp>
+
+RPYBUILD_PYBIND11_MODULE(m) { initWrapper(m); }
+```
+
+---
+
+# Build it + install it
+
+Develop mode
+
+```bash
+$ python3 setup.py develop
+```
+
+Or build a wheel for distribution:
+
+```bash
+$ python3 setup.py bdist_wheel
+$ pip install cool_project.whl
+```
+
+---
+
+# Try it out
+
+``` pycon
+>>> import rpydemo
+>>> rpydemo.add2(2)
+4
+>>> dc = rpydemo.DemoClass()
+>>> dc.setX(2)
+>>> dc.getX()
+2
+```
+
+Useful errors too:
+
+``` pycon
+>>> rpydemo.add2()
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+TypeError: add2(): incompatible function arguments.
+The following argument types are supported:
+    1. (x: int) -> int
+```
+
+---
+
+# Customizations
+
+* What if we wanted to rename a function?
+  * Add a `yml` file and configure it in `pyproject.toml`:
+
+``` yaml
+functions:
+  add2:
+    rename: add_two
+```
+
+* Lots of customizations possible
+  * Parameter tweaks
+  * Documentation
+  * Inline C++
+  * etc
+
+---
+
+# Live Demo
+
+.image-fit[![Do it live](doitlive.gif)]
+
+---
+
+layout: true
+
+<img style="float: right" src="robotpy.png" width="198px" height="66px" />
+
+---
+
+# How to get it
+
+* Source code on github
+  * https://github.com/robotpy/robotpy-build
+
+* Documentation on ReadTheDocs
+  * https://robotpy-build.readthedocs.io
+
+* Easiest way to install is via pip
+
+```bash
+$ pip3 install robotpy-build
+```
+
+???
+
+Happy to consult for projects about this tech
+
+---
+
+layout: false
+class: center, middle
+
+# Thanks!
+
+    </textarea>
+  <script src="remark.js" type="text/javascript">
+  </script>
+  <script type="text/javascript">
+    var slideshow = remark.create({
+      countIncrementalSlides: false
+    });
+  </script>
+</body>
+
+</html>
